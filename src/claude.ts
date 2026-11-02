@@ -63,12 +63,20 @@ export class Claude {
         const allowed = builder ? [...BUILDER_TOOLS, ...opts.project.allowedBash] : REVIEWER_TOOLS;
         const denied = builder ? ALWAYS_DENIED : [...ALWAYS_DENIED, "Edit", "MultiEdit", "Write", "NotebookEdit"];
 
+        const aliases = Object.entries(opts.project.pathAliases ?? {}).map(([rel, abs]) => [rel, expandHome(abs)] as const);
+        const rules = aliases.length
+            ? `${HOUSE_RULES}\nThis worktree is not in the repo's usual folder, so relative paths in CLAUDE.md that leave the repo point elsewhere:\n` +
+              aliases.map(([rel, abs]) => `- \`${rel}\` (relative to the repo root) is \`${abs}\`. Read docs and skills there.`).join("\n") +
+              "\nTreat those folders as read-only reference unless the ticket says otherwise."
+            : HOUSE_RULES;
+
         const args = [
             "-p",
             "--output-format", "json",
             "--permission-mode", builder ? "acceptEdits" : "default",
             "--max-turns", String(c.maxTurns),
-            "--append-system-prompt", HOUSE_RULES,
+            "--append-system-prompt", rules,
+            ...aliases.flatMap(([, abs]) => ["--add-dir", abs]),
             "--allowedTools", allowed.join(","),
             "--disallowedTools", denied.join(","),
             ...(model ? ["--model", model] : []),

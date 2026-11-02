@@ -8,6 +8,8 @@ export interface AgentPr {
     number: number;
     url: string;
     branch: string;
+    /** The branch this PR merges into (dev, or a feature branch). */
+    base: string;
     headSha: string;
     ticket: string;
 }
@@ -28,7 +30,7 @@ export class GitHub {
         const prs = await this.kit.paginate(this.kit.pulls.list, { ...this.split(repo), state: "open", per_page: 100 });
         return prs
             .filter((pr) => pr.labels.some((l) => l.name === PR_LABEL))
-            .map((pr) => ({ number: pr.number, url: pr.html_url, branch: pr.head.ref, headSha: pr.head.sha, ticket: pr.body?.match(TICKET_TAG)?.[1] ?? "" }))
+            .map((pr) => ({ number: pr.number, url: pr.html_url, branch: pr.head.ref, base: pr.base.ref, headSha: pr.head.sha, ticket: pr.body?.match(TICKET_TAG)?.[1] ?? "" }))
             .filter((pr) => pr.ticket);
     }
 
@@ -36,7 +38,7 @@ export class GitHub {
         const { owner, repo: name } = this.split(repo);
         const { data } = await this.kit.pulls.list({ owner, repo: name, state: "open", head: `${owner}:${branch}` });
         const pr = data[0];
-        return pr ? { number: pr.number, url: pr.html_url, branch, headSha: pr.head.sha, ticket: pr.body?.match(TICKET_TAG)?.[1] ?? "" } : undefined;
+        return pr ? { number: pr.number, url: pr.html_url, branch, base: pr.base.ref, headSha: pr.head.sha, ticket: pr.body?.match(TICKET_TAG)?.[1] ?? "" } : undefined;
     }
 
     async createPr(repo: string, opts: { branch: string; base: string; title: string; body: string; ticket: string }): Promise<AgentPr> {
@@ -48,7 +50,7 @@ export class GitHub {
             body: `${opts.body}\n\n<!-- orchestrator-ticket ${opts.ticket} -->`,
         });
         await this.kit.issues.addLabels({ ...this.split(repo), issue_number: data.number, labels: [PR_LABEL] });
-        return { number: data.number, url: data.html_url, branch: opts.branch, headSha: data.head.sha, ticket: opts.ticket };
+        return { number: data.number, url: data.html_url, branch: opts.branch, base: opts.base, headSha: data.head.sha, ticket: opts.ticket };
     }
 
     /** null = GitHub hasn't computed it yet. */

@@ -54,7 +54,16 @@ npm run dry-run               # shows what it would do right now, changes nothin
 | **In Review** | Orchestrator, once the PR is open (your existing status) |
 | **Needs input** | Orchestrator, when it needs you. It assigns the ticket to you so Linear pings your phone |
 
-Labels: **Design** (adds the design gate), **Hold for human** (never auto-merge this one).
+Labels: **Design** (adds the design gate), **Hold for human** (never auto-merge this one), one **… repo** label per
+repo, and an empty **Branch** label group (see below).
+
+Every repo needs a `dev` branch on GitHub before its tickets can run. Cut each one once:
+
+```bash
+for r in ~/Code/Personal/card_sim ~/Code/Personal/ponyrec/{kayou_structured,ponyrec_bot,ponyrec_tts}; do
+  git -C "$r" fetch origin && git -C "$r" push origin origin/main:refs/heads/dev
+done
+```
 
 ## Daily use
 
@@ -62,8 +71,16 @@ Labels: **Design** (adds the design gate), **Hold for human** (never auto-merge 
   straight away whenever a job finishes.
 - **Queue work:** move tickets to **Ready for agent**. Use Linear's *blocked by* links to set the order inside a
   feature; a ticket waits until its blockers are Done. Priority, then your board order, decides the rest.
-- **Which repo:** tickets labelled **PonyRec repo** go to `kayou_structured`; everything else goes to `card_sim`;
-  **Artist Alley repo** tickets are skipped. Change this in `orchestrator.config.ts`.
+- **Which repo:** set by label. **PonyRec repo** → `kayou_structured`, **Bot repo** → `ponyrec_bot`,
+  **TTS repo** → `ponyrec_tts`, **Card Sim repo** (or no repo label) → `card_sim`. **Artist Alley repo** is
+  skipped. One repo per ticket: a change across two repos is two tickets, linked with *blocked by* so the server
+  side lands first.
+- **Which branch:** PRs go to `dev`. To send a ticket's PR to a feature branch instead, add a label inside the
+  **Branch** group named after the branch, e.g. `feature/pvp-rebuild`. Create one label per feature branch;
+  Linear only lets a ticket have one label from a group. The branch is cut from `dev` the first time it's used.
+  Merging the finished feature branch into `dev` is yours to do.
+- **Releasing:** nothing the orchestrator does touches `main`. You merge `dev` → `main` when the preview looks right.
+  The config refuses to auto-merge into `main`.
 - **Answer a question:** reply on the ticket, then move it back to the status the comment names. Your comments
   are passed to the next agent run.
 - **Redo a design:** comment what to change and move it back to **Ready for agent**.
@@ -75,6 +92,8 @@ Labels: **Design** (adds the design gate), **Hold for human** (never auto-merge 
 
 - **Nothing merges without:** green CI on the exact commit, an approving review of that same commit, no merge
   conflicts, and the merge call pins the commit SHA. Any push after the review means another review.
+- **Repos without GitHub CI** (`ponyrec_tts` today) set `ci: false`. Their local gates run before every push and
+  are the only gate, so keep them complete.
 - **Protected paths** (migrations, config, middleware, providers, workflows, dependency files, `.env*`) always stop
   at "ready for you to merge". Edit `protectedPaths` per repo.
 - **`mergeMode: "hold"`** on a repo turns auto-merge off there entirely. Good for the first week.
@@ -104,8 +123,10 @@ state, so it can be stopped, restarted or moved to another machine at any point.
 
 ## Adding a repo
 
-Add an entry to `projects` in `orchestrator.config.ts`: path, GitHub name, routing labels, setup commands, gates
-(copy them from that repo's CI), protected paths. If the repo lives in another Linear team, run a second copy with
+Add an entry to `projects` in `orchestrator.config.ts`: path, GitHub name, base branch, a routing label, setup
+commands, gates (copy them from that repo's CI), protected paths, and `pathAliases` if its CLAUDE.md links to
+folders outside the repo by relative path (`../`). Leave `designHints` out if it has no UI to screenshot. Then run
+`npm run setup-linear` to create the new label. If the repo lives in another Linear team, run a second copy with
 a different config for now.
 
 ## Run it in the background (macOS)

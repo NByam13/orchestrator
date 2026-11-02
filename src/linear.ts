@@ -8,7 +8,7 @@ const TICKET_FIELDS = /* GraphQL */ `
     state { name }
     project { name }
     projectMilestone { name }
-    labels { nodes { name } }
+    labels { nodes { name parent { name } } }
     inverseRelations { nodes { type issue { identifier state { type } } } }
     comments(first: 50) { nodes { body createdAt user { name } } }
 `;
@@ -25,7 +25,7 @@ interface RawTicket {
     state: { name: string };
     project: { name: string } | null;
     projectMilestone: { name: string } | null;
-    labels: { nodes: { name: string }[] };
+    labels: { nodes: { name: string; parent: { name: string } | null }[] };
     inverseRelations: { nodes: { type: string; issue: { identifier: string; state: { type: string } } }[] };
     comments: { nodes: { body: string; createdAt: string; user: { name: string } | null }[] };
 }
@@ -42,6 +42,7 @@ function toTicket(r: RawTicket): Ticket {
         sortOrder: r.sortOrder,
         state: r.state.name,
         labels: r.labels.nodes.map((l) => l.name),
+        labelGroups: Object.fromEntries(r.labels.nodes.filter((l) => l.parent).map((l) => [l.name, l.parent!.name])),
         project: r.project?.name,
         milestone: r.projectMilestone?.name,
         openBlockers: r.inverseRelations.nodes
@@ -131,7 +132,11 @@ export class Linear {
     }
 
     /** Creates any missing statuses and labels the orchestrator needs. Safe to run repeatedly. */
-    async ensureSetup(statuses: { name: string; type: "unstarted" | "started" | "completed" }[], labels: string[]): Promise<string[]> {
+    async ensureSetup(
+        statuses: { name: string; type: "unstarted" | "started" | "completed" }[],
+        labels: string[],
+        groups: string[] = [],
+    ): Promise<string[]> {
         await this.loadTeam();
         const created: string[] = [];
         for (const s of statuses) {
@@ -147,8 +152,13 @@ export class Linear {
         const have = new Set(existing.issueLabels.nodes.map((l) => l.name));
         for (const name of labels) {
             if (have.has(name)) continue;
-            await this.client.createIssueLabel({ teamId: this.teamId!, name, color: name === "Design" ? "#BB87FC" : "#EB5757" });
+            await this.client.createIssueLabel({ teamId: this.teamId!, name, color: name === "Design" ? "#BB87FC" : name.endsWith(" repo") ? "#9B51E0" : "#EB5757" });
             created.push(`label "${name}"`);
+        }
+        for (const name of groups) {
+            if (have.has(name)) continue;
+            await this.client.createIssueLabel({ teamId: this.teamId!, name, isGroup: true, color: "#26B5CE" });
+            created.push(`label group "${name}"`);
         }
         this.teamId = undefined;
         this.stateIds.clear();

@@ -48,7 +48,7 @@ export class Pipeline {
     }
 
     /** Runs the gates; on failure, hands the output to the builder and tries again. */
-    private async gateLoop(project: ProjectConfig, ticket: Ticket, path: string, prUrl = ""): Promise<{ ok: boolean; report: string }> {
+    private async gateLoop(project: ProjectConfig, ticket: Ticket, path: string, base: string, prUrl = ""): Promise<{ ok: boolean; report: string }> {
         for (let attempt = 0; ; attempt++) {
             const gates = await this.runGates(project, path);
             if (gates.ok) return gates;
@@ -58,7 +58,7 @@ export class Pipeline {
                 ...ticketVars(ticket),
                 project: project.name,
                 prUrl: prUrl || "(not opened yet)",
-                base: project.baseBranch,
+                base,
                 round: attempt + 1,
                 maxRounds: this.config.loop.maxGateRetries,
                 problem: `The local quality gates fail:\n\n${gates.report}`,
@@ -84,19 +84,23 @@ export class Pipeline {
 
     // ---------- ticket jobs ----------
 
-    async design(project: ProjectConfig, ticket: Ticket): Promise<void> {
+    async design(project: ProjectConfig, ticket: Ticket, base: string): Promise<void> {
+        if (!project.designHints) {
+            return this.escalate(ticket, `${project.name} has no design step (no designHints in the config).`, `Remove the **${this.config.linear.designLabel}** label to build it without a design review, or add designHints for this repo.`);
+        }
         await this.linear.setState(ticket, this.s.working);
-        await this.linear.comment(ticket, `▶️ Started: design (${project.name})`);
-        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName);
+        await this.linear.comment(ticket, `▶️ Started: design (${project.name} → ${base})`);
+        await this.git.ensureTargetBranch(project, base);
+        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName, base);
         await rm(join(path, DESIGN_DIR, "proposed"), { recursive: true, force: true });
 
-        const prompt = await render("design", { ...ticketVars(ticket), project: project.name, designHints: project.designHints ?? "Follow CLAUDE.md." });
+        const prompt = await render("design", { ...ticketVars(ticket), project: project.name, designHints: project.designHints });
         const res = await this.claude.run({ role: "builder", project, cwd: path, prompt, label: `${ticket.identifier}-design` });
         if (!res.ok) return this.escalate(ticket, "The design run failed.", `${res.text}\n\nLog: \`${res.logFile}\``);
         const report = parseBuildReport(res.text);
 
         await this.git.commitAll(path, `${ticket.identifier}: design: work in progress`);
-        if (await this.git.commitsAhead(path, project.baseBranch)) await this.git.push(path, ticket.branchName);
+        if (await this.git.commitsAhead(path, base)) await this.git.push(path, ticket.branchName);
         if (report.status === "needs_input") return this.escalate(ticket, "The designer has a question.", `**Question:** ${report.question}\n\n${report.summary}`);
 
         const dir = join(path, DESIGN_DIR, "proposed");
@@ -119,11 +123,12 @@ export class Pipeline {
         log.info(ticket.identifier, `design posted (${shots.length} screenshots, $${res.costUsd.toFixed(2)})`);
     }
 
-    async build(project: ProjectConfig, ticket: Ticket): Promise<void> {
+    async build(project: ProjectConfig, ticket: Ticket, base: string): Promise<void> {
         const fromDesign = ticket.state === this.s.designApproved;
         await this.linear.setState(ticket, this.s.working);
-        await this.linear.comment(ticket, `▶️ Started: build${fromDesign ? " from approved design" : ""} (${project.name})`);
-        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName);
+        await this.linear.comment(ticket, `▶️ Started: build${fromDesign ? " from approved design" : ""} (${project.name} → ${base})`);
+        await this.git.ensureTargetBranch(project, base);
+        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName, base);
 
         let design = "";
         if (fromDesign) {
@@ -139,18 +144,18 @@ export class Pipeline {
                 `When done, capture the same screens again to \`${DESIGN_DIR}/after/\` with the same file names and compare.`;
         }
 
-        const prompt = await render("implement", { ...ticketVars(ticket), project: project.name, base: project.baseBranch, design, gates: gateList(project.gates) });
+        const prompt = await render("implement", { ...ticketVars(ticket), project: project.name, base, design, gates: gateList(project.gates) });
         const res = await this.claude.run({ role: "builder", project, cwd: path, prompt, label: `${ticket.identifier}-build` });
         if (!res.ok) return this.escalate(ticket, "The build run failed.", `${res.text}\n\nLog: \`${res.logFile}\``);
         const report = parseBuildReport(res.text);
 
         await this.git.commitAll(path, `${ticket.identifier}: work in progress`);
-        const ahead = await this.git.commitsAhead(path, project.baseBranch);
+        const ahead = await this.git.commitsAhead(path, base);
         if (ahead) await this.git.push(path, ticket.branchName);
         if (report.status === "needs_input") return this.escalate(ticket, "The builder has a question.", `**Question:** ${report.question}\n\n**So far:** ${report.summary}`);
         if (!ahead) return this.escalate(ticket, "The builder finished without changing anything.", report.summary);
 
-        const gates = await this.gateLoop(project, ticket, path);
+        const gates = await this.gateLoop(project, ticket, path, base);
         await this.git.push(path, ticket.branchName);
         if (!gates.ok) return this.escalate(ticket, "Local quality gates still fail after retries.", gates.report.slice(0, 6000));
 
@@ -158,10 +163,10 @@ export class Pipeline {
             (await this.github.findOpenPr(project.github, ticket.branchName)) ??
             (await this.github.createPr(project.github, {
                 branch: ticket.branchName,
-                base: project.baseBranch,
+                base,
                 title: `${ticket.identifier}: ${ticket.title}`,
                 ticket: ticket.identifier,
-                body: `Linear: ${ticket.url}\n\n## Summary\n${report.summary}\n\n## Files\n\`\`\`\n${await this.git.diffStat(path, project.baseBranch)}\n\`\`\`\n\n🤖 Built by the orchestrator with Claude Code.`,
+                body: `Linear: ${ticket.url}\n\n## Summary\n${report.summary}\n\n## Files\n\`\`\`\n${await this.git.diffStat(path, base)}\n\`\`\`\n\n🤖 Built by the orchestrator with Claude Code.`,
             }));
         await this.linear.setState(ticket, this.s.inReview);
         await this.linear.comment(ticket, `PR opened: ${pr.url}\n\n${report.summary}`);
@@ -171,7 +176,7 @@ export class Pipeline {
     // ---------- PR jobs ----------
 
     async review(project: ProjectConfig, ticket: Ticket, pr: AgentPr): Promise<void> {
-        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName);
+        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName, pr.base);
         const local = await this.git.headSha(path);
         if (local !== pr.headSha) {
             log.warn(ticket.identifier, `worktree at ${local.slice(0, 7)} but PR head is ${pr.headSha.slice(0, 7)}; skipping review this tick`);
@@ -183,7 +188,7 @@ export class Pipeline {
               `Read both sets of PNGs. A visible departure from the approved design is a major finding.`
             : "";
 
-        const prompt = await render("review", { ...ticketVars(ticket), project: project.name, prUrl: pr.url, base: project.baseBranch, design });
+        const prompt = await render("review", { ...ticketVars(ticket), project: project.name, prUrl: pr.url, base: pr.base, design });
         const res = await this.claude.run({ role: "reviewer", project, cwd: path, prompt, label: `${ticket.identifier}-review` });
         const report = res.ok ? parseReviewReport(res.text) : parseReviewReport("");
         const blocking = blockingFindings(report, this.config.loop.blockingSeverities);
@@ -197,16 +202,16 @@ export class Pipeline {
     }
 
     async fix(project: ProjectConfig, ticket: Ticket, pr: AgentPr, reason: "ci" | "review" | "conflict"): Promise<void> {
-        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName);
+        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName, pr.base);
         const comments = await this.github.markerComments(project.github, pr.number);
         const round = fixRoundsSinceResume(comments.map((c) => c.marker)) + 1;
 
         let problem: string;
         if (reason === "conflict") {
-            const clean = await this.git.mergeBase(path, project.baseBranch);
+            const clean = await this.git.mergeBase(path, pr.base);
             problem = clean
-                ? `\`origin/${project.baseBranch}\` was merged into this branch cleanly. Make sure everything still works with the new base code.`
-                : `Merging \`origin/${project.baseBranch}\` into this branch left conflicts (see \`git status\`). Resolve each one keeping the intent of both sides, ` +
+                ? `\`origin/${pr.base}\` was merged into this branch cleanly. Make sure everything still works with the new base code.`
+                : `Merging \`origin/${pr.base}\` into this branch left conflicts (see \`git status\`). Resolve each one keeping the intent of both sides, ` +
                   `then \`git add\` the files and \`git commit --no-edit\` to finish the merge.`;
         } else if (reason === "ci") {
             problem = `CI failed on the PR:\n\n${await this.github.failedChecks(project.github, pr.headSha)}`;
@@ -219,7 +224,7 @@ export class Pipeline {
             ...ticketVars(ticket),
             project: project.name,
             prUrl: pr.url,
-            base: project.baseBranch,
+            base: pr.base,
             round,
             maxRounds: this.config.loop.maxFixRounds,
             problem,
@@ -239,7 +244,7 @@ export class Pipeline {
             return this.escalate(ticket, "The fixer has a question.", `**Question:** ${report.question}\n\n${report.summary}`, prRef);
         }
 
-        const gates = await this.gateLoop(project, ticket, path, pr.url);
+        const gates = await this.gateLoop(project, ticket, path, pr.base, pr.url);
         await this.git.push(path, ticket.branchName);
         const sha = await this.git.headSha(path);
         await this.github.comment(

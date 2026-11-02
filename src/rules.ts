@@ -15,6 +15,8 @@ export interface Ticket {
     sortOrder: number;
     state: string;
     labels: string[];
+    /** Label name → its group's name, for labels inside a Linear label group. */
+    labelGroups: Record<string, string>;
     project?: string;
     milestone?: string;
     /** Tickets that block this one and aren't finished. */
@@ -40,6 +42,22 @@ export function routeTicket(ticket: Ticket, config: Config): Route {
     if (byLabel[0]) return { project: byLabel[0] };
     const fallback = config.projects.find((p) => p.default);
     return fallback ? { project: fallback } : { skip: "no repo label and no default repo" };
+}
+
+/** A git branch name we're willing to create and target. Keeps label typos from turning into odd refs. */
+const SAFE_BRANCH = /^(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9][A-Za-z0-9._\/-]*[A-Za-z0-9]$/;
+
+export type Target = { branch: string; fromLabel: boolean } | { error: string };
+
+/** Where the ticket's PR goes: a branch from the ticket's Branch label, else the repo's base branch. */
+export function targetBranch(ticket: Ticket, project: ProjectConfig, branchGroup: string): Target {
+    const picked = ticket.labels.filter((l) => ticket.labelGroups[l] === branchGroup);
+    if (picked.length > 1) return { error: `has more than one ${branchGroup} label (${picked.join(", ")})` };
+    const label = picked[0];
+    if (!label) return { branch: project.baseBranch, fromLabel: false };
+    if (!SAFE_BRANCH.test(label)) return { error: `${branchGroup} label "${label}" isn't a valid branch name` };
+    if (["main", "master"].includes(label)) return { error: `${branchGroup} label "${label}" targets a production branch` };
+    return { branch: label, fromLabel: true };
 }
 
 /** Linear priority: 1 urgent … 4 low, 0 none. None sorts last. Ties keep your manual board order. */

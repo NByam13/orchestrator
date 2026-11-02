@@ -26,6 +26,7 @@ export interface ProjectConfig {
     repoPath: string;
     /** "owner/repo" on GitHub. */
     github: string;
+    /** Branch PRs target unless the ticket has a Branch label. Merging here should NOT deploy to production. */
     baseBranch: string;
     /** Which tickets belong to this repo. A ticket matches if it has any of these labels. */
     labels?: string[];
@@ -46,8 +47,18 @@ export interface ProjectConfig {
     maxParallel: number;
     /** Extra Bash commands agents may run without asking, as Claude Code permission rules. */
     allowedBash: string[];
-    /** Free-text tips for the design agent: how to run the app and where pages live. */
+    /** Free-text tips for the design agent: how to run the app and where pages live. Leave unset if the repo has no UI to screenshot. */
     designHints?: string;
+    /**
+     * Whether the repo has GitHub CI. Without it, the local gates (run before every push) are the only gate,
+     * and the orchestrator doesn't wait for checks that will never come.
+     */
+    ci: boolean;
+    /**
+     * Folders outside the repo that its CLAUDE.md refers to by relative path, e.g. `{ "../": "~/Code/Personal/ponyrec" }`.
+     * Agents work in a worktree elsewhere, so they're told where these really are and given read access.
+     */
+    pathAliases?: Record<string, string>;
 }
 
 export interface Config {
@@ -60,6 +71,11 @@ export interface Config {
         holdLabel: string;
         /** Labels that mean "this belongs to a repo the orchestrator doesn't know". Such tickets are skipped. */
         unmanagedLabels: string[];
+        /**
+         * Label group whose labels are branch names, e.g. group "Branch" with label "feature/pvp-rebuild".
+         * A ticket with one targets that branch instead of the repo's baseBranch. The branch is cut from baseBranch if missing.
+         */
+        branchLabelGroup: string;
     };
     claude: {
         /** Path or name of the Claude Code CLI. */
@@ -109,6 +125,9 @@ export function validateConfig(config: Config): string[] {
         if (!/^[\w.-]+\/[\w.-]+$/.test(p.github)) problems.push(`${p.name}: github must be "owner/repo".`);
         if (!p.default && !p.labels?.length) problems.push(`${p.name}: needs routing labels or default: true.`);
         if (p.gates.length === 0) problems.push(`${p.name}: no gates. Auto-merge without gates is not allowed.`);
+        if (["main", "master"].includes(p.baseBranch) && p.mergeMode === "merge") {
+            problems.push(`${p.name}: auto-merging into ${p.baseBranch} is not allowed. Use a dev branch or mergeMode "hold".`);
+        }
     }
     return problems;
 }

@@ -11,6 +11,7 @@ import {
     parseReviewReport,
     protectedFilesTouched,
     routeTicket,
+    targetBranch,
     type Marker,
     type PrSnapshot,
     type Ticket,
@@ -28,6 +29,7 @@ const ticket = (over: Partial<Ticket> = {}): Ticket => ({
     sortOrder: 0,
     state: "Ready for agent",
     labels: [],
+    labelGroups: {},
     openBlockers: [],
     comments: [],
     ...over,
@@ -60,8 +62,29 @@ describe("routing", () => {
     it("defaults unlabelled tickets to card_sim", () => {
         expect(routeTicket(ticket({ labels: ["Bug"] }), config)).toMatchObject({ project: { name: "card_sim" } });
     });
+    it("routes the bot and TTS labels", () => {
+        expect(routeTicket(ticket({ labels: ["Bot repo"] }), config)).toMatchObject({ project: { name: "ponyrec_bot" } });
+        expect(routeTicket(ticket({ labels: ["TTS repo"] }), config)).toMatchObject({ project: { name: "ponyrec_tts" } });
+        expect(routeTicket(ticket({ labels: ["Card Sim repo"] }), config)).toMatchObject({ project: { name: "card_sim" } });
+    });
+    it("refuses a ticket labelled for two repos", () => {
+        expect(routeTicket(ticket({ labels: ["Bot repo", "TTS repo"] }), config)).toHaveProperty("skip");
+    });
     it("skips repos it doesn't manage", () => {
         expect(routeTicket(ticket({ labels: ["Artist Alley repo"] }), config)).toHaveProperty("skip");
+    });
+});
+
+describe("target branch", () => {
+    const cardSim = config.projects.find((p) => p.name === "card_sim")!;
+    const branchTicket = (...names: string[]) => ticket({ labels: ["Feature", ...names], labelGroups: Object.fromEntries(names.map((n) => [n, "Branch"])) });
+
+    it("defaults to dev", () => expect(targetBranch(ticket(), cardSim, "Branch")).toEqual({ branch: "dev", fromLabel: false }));
+    it("uses the Branch label", () => expect(targetBranch(branchTicket("feature/pvp-rebuild"), cardSim, "Branch")).toEqual({ branch: "feature/pvp-rebuild", fromLabel: true }));
+    it("ignores same-named labels outside the group", () => expect(targetBranch(ticket({ labels: ["feature/x"] }), cardSim, "Branch")).toEqual({ branch: "dev", fromLabel: false }));
+    it("rejects two branch labels", () => expect(targetBranch(branchTicket("feature/a", "feature/b"), cardSim, "Branch")).toHaveProperty("error"));
+    it("rejects unsafe names", () => {
+        for (const bad of ["feature/a b", "../x", "feature//x", "-x", "main"]) expect(targetBranch(branchTicket(bad), cardSim, "Branch")).toHaveProperty("error");
     });
 });
 

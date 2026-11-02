@@ -1,18 +1,17 @@
 import { defineConfig } from "./src/config.ts";
 
+const PONYREC_WORKSPACE = "~/Code/Personal/ponyrec";
+
 // Changes that always wait for a human merge, whatever the repo.
-const sharedProtected = [
+const sharedProtected = [".github/**", ".githooks/**", "package.json", "package-lock.json", ".env*"];
+const laravelProtected = [
+    ...sharedProtected,
     "database/migrations/**",
     "config/**",
     "app/Http/Middleware/**",
     "app/Providers/**",
-    ".github/**",
-    ".githooks/**",
     "composer.json",
     "composer.lock",
-    "package.json",
-    "package-lock.json",
-    ".env*",
 ];
 
 export default defineConfig({
@@ -30,6 +29,8 @@ export default defineConfig({
         designLabel: "Design",
         holdLabel: "Hold for human",
         unmanagedLabels: ["Artist Alley repo"],
+        // Labels inside this group are branch names, e.g. "feature/pvp-rebuild".
+        branchLabelGroup: "Branch",
     },
     claude: {
         bin: "claude",
@@ -51,13 +52,16 @@ export default defineConfig({
         worktrees: "~/.orchestrator/worktrees",
         state: "~/.orchestrator/state",
     },
+    // Routing: a ticket goes to the repo whose label it has. No repo label → card_sim.
     projects: [
         {
             name: "kayou_structured",
-            repoPath: "~/Code/Personal/ponyrec/kayou_structured",
+            repoPath: `${PONYREC_WORKSPACE}/kayou_structured`,
             github: "NByam13/kayou_structured",
-            baseBranch: "main",
+            baseBranch: "dev",
             labels: ["PonyRec repo"],
+            ci: true,
+            pathAliases: { "../": PONYREC_WORKSPACE },
             setup: [
                 "cp {repo}/.env .env",
                 "cp {repo}/.env.testing .env.testing",
@@ -75,8 +79,7 @@ export default defineConfig({
                 "npm run test",
                 "npm run build",
             ],
-            protectedPaths: [...sharedProtected, "pipeline/data/**"],
-            // Merging to main deploys ponyrec.net.
+            protectedPaths: [...laravelProtected, "pipeline/data/**"],
             mergeMode: "merge",
             mergeMethod: "squash",
             maxParallel: 2,
@@ -86,11 +89,50 @@ export default defineConfig({
                 "Run `npm run build` then `php artisan serve --port=8123`, and screenshot with Playwright.",
         },
         {
+            name: "ponyrec_bot",
+            repoPath: `${PONYREC_WORKSPACE}/ponyrec_bot`,
+            github: "NByam13/ponyrec_bot",
+            baseBranch: "dev",
+            labels: ["Bot repo"],
+            ci: true,
+            pathAliases: { "../": PONYREC_WORKSPACE },
+            setup: ["cp {repo}/.env .env", "git config core.hooksPath .githooks", "npm ci --no-audit --no-fund --silent"],
+            // Mirrors .github/workflows/ci.yml (minus the Fly deploy).
+            gates: ["npm run lint", "npm run type-check", "npm run test", "npm run build"],
+            protectedPaths: [...sharedProtected, "fly.toml", "Dockerfile"],
+            mergeMode: "merge",
+            mergeMethod: "squash",
+            maxParallel: 1,
+            allowedBash: [],
+            // No designHints: Discord embeds aren't screenshot-able here, so the Design label isn't supported.
+        },
+        {
+            name: "ponyrec_tts",
+            repoPath: `${PONYREC_WORKSPACE}/ponyrec_tts`,
+            github: "NByam13/ponyrec_tts",
+            baseBranch: "dev",
+            labels: ["TTS repo"],
+            // No GitHub workflow yet, so the local gates below are the only gate.
+            ci: false,
+            pathAliases: { "../": PONYREC_WORKSPACE },
+            setup: ["git config core.hooksPath .githooks", "npm ci --no-audit --no-fund --silent"],
+            gates: ["npm run lint", "npm run type-check", "npm run lua:lint", "npm run test", "npm run build"],
+            protectedPaths: sharedProtected,
+            mergeMode: "merge",
+            mergeMethod: "squash",
+            maxParallel: 1,
+            allowedBash: ["Bash(luacheck:*)", "Bash(busted:*)", "Bash(lua:*)"],
+            // No designHints: the table only renders inside Tabletop Simulator.
+        },
+        {
             name: "card_sim",
             repoPath: "~/Code/Personal/card_sim",
             github: "NByam13/card_sim",
-            baseBranch: "main",
+            baseBranch: "dev",
+            labels: ["Card Sim repo"],
             default: true,
+            ci: true,
+            pathAliases: { "../ponyrec/": PONYREC_WORKSPACE },
             setup: [
                 "cp {repo}/.env .env",
                 "composer install --no-interaction --no-progress --quiet",
@@ -98,7 +140,7 @@ export default defineConfig({
             ],
             // Mirrors .github/workflows/tests.yml.
             gates: ["composer ci:check", "npm run build"],
-            protectedPaths: sharedProtected,
+            protectedPaths: laravelProtected,
             mergeMode: "merge",
             mergeMethod: "squash",
             maxParallel: 2,

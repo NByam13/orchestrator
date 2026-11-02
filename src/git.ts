@@ -23,8 +23,25 @@ export class Git {
         return r.code === 0;
     }
 
-    /** Returns the worktree for a ticket, creating it (and running project setup) if needed. */
-    async ensureWorktree(project: ProjectConfig, identifier: string, branch: string): Promise<string> {
+    /**
+     * Makes sure the branch a PR will target exists on origin. The repo's base branch must already exist;
+     * a feature branch from a Branch label is cut from the base branch the first time it's used.
+     */
+    async ensureTargetBranch(project: ProjectConfig, target: string): Promise<void> {
+        const repo = this.repo(project);
+        if (await this.remoteBranchExists(repo, target)) return;
+        if (target === project.baseBranch) {
+            throw new Error(`${project.name}: base branch "${target}" doesn't exist on origin. Create it: git push origin main:${target}`);
+        }
+        if (!(await this.remoteBranchExists(repo, project.baseBranch))) {
+            throw new Error(`${project.name}: can't cut "${target}" because base branch "${project.baseBranch}" doesn't exist on origin either.`);
+        }
+        await must("git", ["fetch", "--quiet", "origin", project.baseBranch], { cwd: repo });
+        await must("git", ["push", "--quiet", "origin", `refs/remotes/origin/${project.baseBranch}:refs/heads/${target}`], { cwd: repo });
+    }
+
+    /** Returns the worktree for a ticket, creating it (and running project setup) if needed. New branches start from `base`. */
+    async ensureWorktree(project: ProjectConfig, identifier: string, branch: string, base: string): Promise<string> {
         const repo = this.repo(project);
         const path = this.worktreePath(project, identifier);
         await must("git", ["fetch", "--quiet", "origin"], { cwd: repo });
@@ -44,7 +61,7 @@ export class Git {
         } else if (await this.remoteBranchExists(repo, branch)) {
             await must("git", ["worktree", "add", "--track", "-b", branch, path, `origin/${branch}`], { cwd: repo });
         } else {
-            await must("git", ["worktree", "add", "--no-track", "-b", branch, path, `origin/${project.baseBranch}`], { cwd: repo });
+            await must("git", ["worktree", "add", "--no-track", "-b", branch, path, `origin/${base}`], { cwd: repo });
         }
 
         for (const cmd of project.setup) {

@@ -43,7 +43,8 @@ async function main(): Promise<void> {
                 { name: s.needsInput, type: "started" },
                 { name: s.done, type: "completed" },
             ],
-            [config.linear.designLabel, config.linear.holdLabel],
+            [config.linear.designLabel, config.linear.holdLabel, ...config.projects.flatMap((p) => p.labels ?? [])],
+            [config.linear.branchLabelGroup],
         );
         log.info("setup", created.length ? `created ${created.join(", ")}` : "everything already exists");
         return;

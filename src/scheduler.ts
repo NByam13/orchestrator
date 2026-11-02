@@ -6,7 +6,7 @@ import type { AgentPr, GitHub } from "./github.ts";
 import type { Linear } from "./linear.ts";
 import { log } from "./log.ts";
 import type { Pipeline } from "./pipeline.ts";
-import { compareTickets, decidePrAction, protectedFilesTouched, routeTicket, type PrAction, type Ticket } from "./rules.ts";
+import { compareTickets, decidePrAction, protectedFilesTouched, routeTicket, targetBranch, type PrAction, type Ticket } from "./rules.ts";
 
 /** Create this file (`touch PAUSE`) to stop new work without killing runs in progress. */
 export const PAUSE_FILE = fileURLToPath(new URL("../PAUSE", import.meta.url));
@@ -75,13 +75,25 @@ export class Scheduler {
                 continue;
             }
             const project = route.project;
+            const target = targetBranch(ticket, project, this.config.linear.branchLabelGroup);
+            if ("error" in target) {
+                planned.push({
+                    key: ticket.identifier,
+                    project,
+                    agent: false,
+                    describe: "escalate bad branch label",
+                    run: () => this.pipeline.escalate(ticket, `The ticket ${target.error}.`, `Fix the ${this.config.linear.branchLabelGroup} label, then move it back to Ready for agent.`),
+                });
+                continue;
+            }
+            const base = target.branch;
             const needsDesign = ticket.state === s.ready && ticket.labels.includes(this.config.linear.designLabel);
             planned.push({
                 key: ticket.identifier,
                 project,
                 agent: true,
-                describe: `${needsDesign ? "design" : "build"} → ${project.name}`,
-                run: () => (needsDesign ? this.pipeline.design(project, ticket) : this.pipeline.build(project, ticket)),
+                describe: `${needsDesign ? "design" : "build"} → ${project.name}:${base}`,
+                run: () => (needsDesign ? this.pipeline.design(project, ticket, base) : this.pipeline.build(project, ticket, base)),
             });
         }
         return planned;
@@ -93,7 +105,8 @@ export class Scheduler {
             this.github.markerComments(project.github, pr.number),
         ]);
         pr.headSha = headSha;
-        const ci = await this.github.ciState(project.github, headSha);
+        // No GitHub CI: the local gates already passed before this commit was pushed.
+        const ci = project.ci ? await this.github.ciState(project.github, headSha) : "success";
         const files = await this.github.changedFiles(project.github, pr.number);
         return decidePrAction({
             headSha,
