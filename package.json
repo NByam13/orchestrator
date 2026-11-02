@@ -1,0 +1,29 @@
+{
+    "name": "orchestrator",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Moves Linear tickets through design, build, review, fix and merge using headless Claude Code.",
+    "type": "module",
+    "engines": {
+        "node": ">=22.6"
+    },
+    "scripts": {
+        "start": "tsx --env-file-if-exists=.env src/index.ts start",
+        "once": "tsx --env-file-if-exists=.env src/index.ts once",
+        "dry-run": "tsx --env-file-if-exists=.env src/index.ts once --dry-run",
+        "setup-linear": "tsx --env-file-if-exists=.env src/index.ts setup-linear",
+        "status": "tsx --env-file-if-exists=.env src/index.ts status",
+        "test": "vitest run",
+        "type-check": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@linear/sdk": "^100.0.0",
+        "@octokit/rest": "^22.0.1",
+        "tsx": "^4.23.15"
+    },
+    "devDependencies": {
+        "@types/node": "^24.0.0",
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.7"
+    }
+}
