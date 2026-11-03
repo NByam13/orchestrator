@@ -127,23 +127,27 @@ export class Linear {
 
     /** Linear projects on the team that are In Progress, with a light list of their tickets. */
     async activeProjects(): Promise<ProjectSummary[]> {
-        const data = await this.gql<{
-            teams: { nodes: { projects: { nodes: { id: string; name: string; url: string; status: { type: string } | null; issues: { nodes: { identifier: string; state: { type: string }; labels: { nodes: { name: string }[] } }[] } }[] } }[] };
-        }>(
-            `query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes { projects(first: 50) { nodes {
-                id name url status { type }
-                issues(first: 250) { nodes { identifier state { type } labels { nodes { name } } } }
-            } } } } }`,
+        // Two steps: one nested query blows Linear's 10k complexity limit.
+        const data = await this.gql<{ teams: { nodes: { projects: { nodes: { id: string; name: string; url: string }[] } }[] } }>(
+            `query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes {
+                projects(first: 50, filter: { status: { type: { eq: "started" } } }) { nodes { id name url } }
+            } } }`,
             { key: this.teamKey },
         );
-        return (data.teams.nodes[0]?.projects.nodes ?? [])
-            .filter((p) => p.status?.type === "started")
-            .map((p) => ({
-                id: p.id,
-                name: p.name,
-                url: p.url,
-                issues: p.issues.nodes.map((i) => ({ identifier: i.identifier, stateType: i.state.type, labels: i.labels.nodes.map((l) => l.name) })),
-            }));
+        const projects = data.teams.nodes[0]?.projects.nodes ?? [];
+        return Promise.all(
+            projects.map(async (p) => {
+                // shortcut: first 100 issues, 10 labels each; paginate if a project ever outgrows that.
+                const res = await this.gql<{ project: { issues: { nodes: { identifier: string; state: { type: string }; labels: { nodes: { name: string }[] } }[] } } }>(
+                    `query($id: String!) { project(id: $id) { issues(first: 100) { nodes { identifier state { type } labels(first: 10) { nodes { name } } } } } }`,
+                    { id: p.id },
+                );
+                return {
+                    ...p,
+                    issues: res.project.issues.nodes.map((i) => ({ identifier: i.identifier, stateType: i.state.type, labels: i.labels.nodes.map((l) => l.name) })),
+                };
+            }),
+        );
     }
 
     async createIssue(opts: { projectId: string; title: string; description: string; labels: string[]; state: string; assigneeId: string; priority: number }): Promise<{ identifier: string; url: string; id: string }> {
