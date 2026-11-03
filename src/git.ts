@@ -7,6 +7,14 @@ import { must, run, sh, tail } from "./shell.ts";
 /** Scratch folder inside each worktree for screenshots and reports. Never committed. */
 export const SCRATCH = ".orchestrator";
 
+// Worktrees share their repo's refs, and overlapping fetches fail with "cannot lock ref". Run them one at a time.
+let fetchQueue: Promise<unknown> = Promise.resolve();
+function fetchOrigin(cwd: string, ...refs: string[]): Promise<string> {
+    const next = fetchQueue.then(() => must("git", ["fetch", "--quiet", "origin", ...refs], { cwd }));
+    fetchQueue = next.catch(() => {});
+    return next;
+}
+
 export class Git {
     constructor(private config: Config) {}
 
@@ -36,7 +44,7 @@ export class Git {
         if (!(await this.remoteBranchExists(repo, project.baseBranch))) {
             throw new Error(`${project.name}: can't cut "${target}" because base branch "${project.baseBranch}" doesn't exist on origin either.`);
         }
-        await must("git", ["fetch", "--quiet", "origin", project.baseBranch], { cwd: repo });
+        await fetchOrigin(repo, project.baseBranch);
         await must("git", ["push", "--quiet", "origin", `refs/remotes/origin/${project.baseBranch}:refs/heads/${target}`], { cwd: repo });
     }
 
@@ -44,7 +52,7 @@ export class Git {
     async ensureWorktree(project: ProjectConfig, identifier: string, branch: string, base: string): Promise<string> {
         const repo = this.repo(project);
         const path = this.worktreePath(project, identifier);
-        await must("git", ["fetch", "--quiet", "origin"], { cwd: repo });
+        await fetchOrigin(repo);
         await this.ignoreScratch(repo);
 
         if (existsSync(join(path, ".git"))) {
@@ -85,7 +93,7 @@ export class Git {
     async snapshotWorktree(project: ProjectConfig, name: string, branch: string): Promise<string> {
         const repo = this.repo(project);
         const path = this.worktreePath(project, name);
-        await must("git", ["fetch", "--quiet", "origin"], { cwd: repo });
+        await fetchOrigin(repo);
         await run("git", ["worktree", "remove", "--force", path], { cwd: repo });
         await mkdir(join(path, ".."), { recursive: true });
         await must("git", ["worktree", "add", "--detach", path, `origin/${branch}`], { cwd: repo });
@@ -119,7 +127,7 @@ export class Git {
 
     /** Merges the latest base into the branch. Returns false if there are conflicts left for the agent. */
     async mergeBase(path: string, base: string): Promise<boolean> {
-        await must("git", ["fetch", "--quiet", "origin", base], { cwd: path });
+        await fetchOrigin(path, base);
         const r = await run("git", ["merge", "--no-edit", `origin/${base}`], { cwd: path });
         return r.code === 0;
     }
