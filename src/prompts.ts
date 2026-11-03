@@ -5,11 +5,13 @@ import type { Ticket } from "./rules.ts";
 
 const PROMPTS_DIR = fileURLToPath(new URL("../prompts/", import.meta.url));
 
-export type PromptName = "implement" | "design" | "review" | "fix";
+export type PromptName = "implement" | "design" | "review" | "fix" | "qa";
 
 export async function render(name: PromptName, vars: Record<string, string | number | undefined>): Promise<string> {
     const template = await readFile(`${PROMPTS_DIR}${name}.md`, "utf8");
     const body = template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(vars[key] ?? "")).replace(/\n{3,}/g, "\n\n");
+    // The QA prompt carries its own output contract.
+    if (name === "qa") return body.trim();
     return `${body.trim()}\n\n${name === "review" ? REVIEW_CONTRACT : BUILD_CONTRACT}`;
 }
 

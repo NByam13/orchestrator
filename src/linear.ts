@@ -54,6 +54,13 @@ function toTicket(r: RawTicket): Ticket {
     };
 }
 
+export interface ProjectSummary {
+    id: string;
+    name: string;
+    url: string;
+    issues: { identifier: string; stateType: string; labels: string[] }[];
+}
+
 /** Comments the orchestrator posts start with this, so prompts can tell them apart from yours. */
 export const BOT_PREFIX = "🤖 **Orchestrator**";
 
@@ -116,6 +123,50 @@ export class Linear {
 
     async comment(ticket: Pick<Ticket, "id">, body: string): Promise<void> {
         await this.client.createComment({ issueId: ticket.id, body: `${BOT_PREFIX}\n\n${body}` });
+    }
+
+    /** Linear projects on the team that are In Progress, with a light list of their tickets. */
+    async activeProjects(): Promise<ProjectSummary[]> {
+        const data = await this.gql<{
+            teams: { nodes: { projects: { nodes: { id: string; name: string; url: string; status: { type: string } | null; issues: { nodes: { identifier: string; state: { type: string }; labels: { nodes: { name: string }[] } }[] } }[] } }[] };
+        }>(
+            `query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes { projects(first: 50) { nodes {
+                id name url status { type }
+                issues(first: 250) { nodes { identifier state { type } labels { nodes { name } } } }
+            } } } } }`,
+            { key: this.teamKey },
+        );
+        return (data.teams.nodes[0]?.projects.nodes ?? [])
+            .filter((p) => p.status?.type === "started")
+            .map((p) => ({
+                id: p.id,
+                name: p.name,
+                url: p.url,
+                issues: p.issues.nodes.map((i) => ({ identifier: i.identifier, stateType: i.state.type, labels: i.labels.nodes.map((l) => l.name) })),
+            }));
+    }
+
+    async createIssue(opts: { projectId: string; title: string; description: string; labels: string[]; state: string; assigneeId: string; priority: number }): Promise<{ identifier: string; url: string; id: string }> {
+        await this.loadTeam();
+        const stateId = this.stateIds.get(opts.state);
+        if (!stateId) throw new Error(`Linear status "${opts.state}" doesn't exist`);
+        const found = await this.gql<{ issueLabels: { nodes: { id: string; name: string }[] } }>(
+            `query($names: [String!]) { issueLabels(first: 50, filter: { name: { in: $names } }) { nodes { id name } } }`,
+            { names: opts.labels },
+        );
+        const payload = await this.client.createIssue({
+            teamId: this.teamId!,
+            projectId: opts.projectId,
+            title: opts.title,
+            description: opts.description,
+            labelIds: found.issueLabels.nodes.map((l) => l.id),
+            stateId,
+            assigneeId: opts.assigneeId,
+            priority: opts.priority,
+        });
+        const issue = await payload.issue;
+        if (!issue) throw new Error("Linear didn't return the new issue");
+        return { identifier: issue.identifier, url: issue.url, id: issue.id };
     }
 
     /** Uploads a PNG to Linear's storage and returns a URL usable in a comment. */

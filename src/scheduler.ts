@@ -5,15 +5,28 @@ import type { Config, ProjectConfig } from "./config.ts";
 import type { AgentPr, GitHub } from "./github.ts";
 import type { Linear } from "./linear.ts";
 import { log } from "./log.ts";
+import { notify } from "./notify.ts";
 import type { Pipeline } from "./pipeline.ts";
-import { compareTickets, decidePrAction, protectedFilesTouched, routeTicket, targetBranch, type PrAction, type Ticket } from "./rules.ts";
+import type { Qa } from "./qa.ts";
+import {
+    compareTickets,
+    decidePrAction,
+    projectReadyForQa,
+    projectSignature,
+    protectedFilesTouched,
+    routeTicket,
+    targetBranch,
+    type PrAction,
+    type Ticket,
+} from "./rules.ts";
 
 /** Create this file (`touch PAUSE`) to stop new work without killing runs in progress. */
 export const PAUSE_FILE = fileURLToPath(new URL("../PAUSE", import.meta.url));
 
 interface Planned {
     key: string;
-    project: ProjectConfig;
+    /** Unset for work that spans repos (QA). */
+    project?: ProjectConfig;
     describe: string;
     /** Costs agent time (counts against parallel limits and budget). */
     agent: boolean;
@@ -22,6 +35,8 @@ interface Planned {
 
 export class Scheduler {
     private running = new Map<string, { project: string; describe: string; since: Date }>();
+    /** Project id → ticket states last time it was checked for QA, so finished projects aren't re-checked every tick. */
+    private qaSeen = new Map<string, string>();
     private stopping = false;
 
     constructor(
@@ -30,6 +45,7 @@ export class Scheduler {
         private github: GitHub,
         private claude: Claude,
         private pipeline: Pipeline,
+        private qa: Qa,
     ) {}
 
     /** Tickets left in "Agent working" by a crash or restart go back to the queue. Work so far stays on the branch. */
@@ -96,6 +112,31 @@ export class Scheduler {
                 run: () => (needsDesign ? this.pipeline.design(project, ticket, base) : this.pipeline.build(project, ticket, base)),
             });
         }
+        // 3. Features whose tickets are all done get a QA checklist for you.
+        if (this.config.qa.enabled) {
+            for (const proj of await this.linear.activeProjects()) {
+                const key = `qa:${proj.id}`;
+                const sig = projectSignature(proj.issues);
+                if (this.running.has(key) || this.qaSeen.get(proj.id) === sig) continue;
+                if (!projectReadyForQa(proj.issues, this.config.qa.label)) {
+                    this.qaSeen.set(proj.id, sig);
+                    continue;
+                }
+                planned.push({
+                    key,
+                    agent: true,
+                    describe: `QA checklist for "${proj.name}"`,
+                    run: async () => {
+                        try {
+                            await this.qa.run(proj);
+                        } finally {
+                            // Success or failure, don't retry until a ticket in the project changes (or a restart).
+                            this.qaSeen.set(proj.id, sig);
+                        }
+                    },
+                });
+            }
+        }
         return planned;
     }
 
@@ -161,7 +202,7 @@ export class Scheduler {
                 if (overBudget) continue;
                 const agentRuns = [...this.running.values()];
                 if (agentRuns.length >= this.config.loop.maxParallel) continue;
-                if (agentRuns.filter((r) => r.project === job.project.name).length >= job.project.maxParallel) continue;
+                if (job.project && agentRuns.filter((r) => r.project === job.project!.name).length >= job.project.maxParallel) continue;
             }
             if (dryRun) {
                 log.info(job.key, `[dry run] would ${job.describe}`);
@@ -174,12 +215,16 @@ export class Scheduler {
 
     private start(job: Planned): Promise<void> {
         log.info(job.key, `start: ${job.describe}`);
-        this.running.set(job.key, { project: job.project.name, describe: job.describe, since: new Date() });
+        this.running.set(job.key, { project: job.project?.name ?? "*", describe: job.describe, since: new Date() });
         return job
             .run()
             .catch(async (err: unknown) => {
                 const msg = err instanceof Error ? err.message : String(err);
                 log.error(job.key, msg);
+                if (job.key.startsWith("qa:")) {
+                    await notify(`QA step failed`, `${job.describe}: ${msg.slice(0, 500)}`);
+                    return;
+                }
                 try {
                     const ticket = await this.linear.ticket(job.key);
                     await this.pipeline.escalate(ticket, `The orchestrator hit an error during "${job.describe}".`, `\`\`\`\n${msg.slice(0, 4000)}\n\`\`\``);

@@ -5,6 +5,7 @@ import { GitHub } from "./github.ts";
 import { Linear } from "./linear.ts";
 import { log } from "./log.ts";
 import { Pipeline } from "./pipeline.ts";
+import { Qa } from "./qa.ts";
 import { PAUSE_FILE, Scheduler } from "./scheduler.ts";
 
 async function loadConfig(): Promise<Config> {
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
                 { name: s.needsInput, type: "started" },
                 { name: s.done, type: "completed" },
             ],
-            [config.linear.designLabel, config.linear.holdLabel, ...config.projects.flatMap((p) => p.labels ?? [])],
+            [config.linear.designLabel, config.linear.holdLabel, config.qa.label, ...config.projects.flatMap((p) => p.labels ?? [])],
             [config.linear.branchLabelGroup],
         );
         log.info("setup", created.length ? `created ${created.join(", ")}` : "everything already exists");
@@ -53,8 +54,10 @@ async function main(): Promise<void> {
     const github = new GitHub(env("GITHUB_TOKEN"));
     const claude = new Claude(config);
     const git = new Git(config);
-    const pipeline = new Pipeline(config, linear, github, git, claude, await linear.viewerId());
-    const scheduler = new Scheduler(config, linear, github, claude, pipeline);
+    const humanId = await linear.viewerId();
+    const pipeline = new Pipeline(config, linear, github, git, claude, humanId);
+    const qa = new Qa(config, linear, github, git, claude, humanId);
+    const scheduler = new Scheduler(config, linear, github, claude, pipeline, qa);
 
     switch (command) {
         case "start":

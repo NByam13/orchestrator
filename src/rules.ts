@@ -286,3 +286,66 @@ export function decidePrAction(s: PrSnapshot): PrAction {
     if (s.mergeable === null) return { do: "wait", why: "GitHub is still computing mergeability" };
     return { do: "merge" };
 }
+
+// ---------- QA ----------
+
+export interface ProjectIssue {
+    identifier: string;
+    stateType: string;
+    labels: string[];
+}
+
+/** A project is ready for QA when it has work, all of it is done, and no QA ticket exists yet. */
+export function projectReadyForQa(issues: ProjectIssue[], qaLabel: string): boolean {
+    if (issues.some((i) => i.labels.includes(qaLabel))) return false;
+    const work = issues.filter((i) => !["canceled", "duplicate"].includes(i.stateType));
+    return work.length > 0 && work.every((i) => i.stateType === "completed");
+}
+
+/** Changes whenever any ticket in the project changes state, so a project is only re-checked when something moved. */
+export function projectSignature(issues: ProjectIssue[]): string {
+    return issues
+        .map((i) => `${i.identifier}:${i.stateType}:${i.labels.join("|")}`)
+        .sort()
+        .join(",");
+}
+
+export interface QaReport {
+    summary: string;
+    setup: string[];
+    checks: { area: string; step: string; expect: string; kind: "happy" | "edge" | "regression" }[];
+    risks: string[];
+}
+
+export function parseQaReport(text: string): QaReport | undefined {
+    const raw = extractReport(text) as Partial<QaReport> | undefined;
+    if (!raw || !Array.isArray(raw.checks) || raw.checks.length === 0) return undefined;
+    const kinds = new Set(["happy", "edge", "regression"]);
+    return {
+        summary: String(raw.summary ?? ""),
+        setup: Array.isArray(raw.setup) ? raw.setup.map(String) : [],
+        checks: raw.checks
+            .filter((c) => c && typeof c.step === "string")
+            .map((c) => ({ area: String(c.area || "General"), step: c.step, expect: String(c.expect ?? ""), kind: kinds.has(c.kind) ? c.kind : "happy" })),
+        risks: Array.isArray(raw.risks) ? raw.risks.map(String) : [],
+    };
+}
+
+/** Markdown for one repo's part of the QA ticket. Checkboxes are Linear task-list items. */
+export function qaSection(heading: string, r: QaReport): string {
+    const kindTitle = { happy: "What it should do", edge: "Edge cases", regression: "Still works" } as const;
+    const out = [`## ${heading}`, r.summary];
+    if (r.setup.length) out.push("**Setup**", ...r.setup.map((s) => `- ${s}`));
+    for (const kind of ["happy", "edge", "regression"] as const) {
+        const checks = r.checks.filter((c) => c.kind === kind);
+        if (!checks.length) continue;
+        out.push(`### ${kindTitle[kind]}`);
+        const areas = [...new Set(checks.map((c) => c.area))];
+        for (const area of areas) {
+            out.push(`**${area}**`);
+            for (const c of checks.filter((x) => x.area === area)) out.push(`- [ ] ${c.step}${c.expect ? ` → *${c.expect}*` : ""}`);
+        }
+    }
+    if (r.risks.length) out.push("### Most likely to break", ...r.risks.map((x) => `- ${x}`));
+    return out.join("\n\n");
+}

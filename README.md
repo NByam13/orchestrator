@@ -54,7 +54,7 @@ npm run dry-run               # shows what it would do right now, changes nothin
 | **In Review** | Orchestrator, once the PR is open (your existing status) |
 | **Needs input** | Orchestrator, when it needs you. It assigns the ticket to you so Linear pings your phone |
 
-Labels: **Design** (adds the design gate), **Hold for human** (never auto-merge this one), one **… repo** label per
+Labels: **Design** (adds the design gate), **Hold for human** (never auto-merge this one), **QA**, one **… repo** label per
 repo, and an empty **Branch** label group (see below).
 
 Every repo needs a `dev` branch on GitHub before its tickets can run. Cut each one once:
@@ -79,6 +79,12 @@ done
   **Branch** group named after the branch, e.g. `feature/pvp-rebuild`. Create one label per feature branch;
   Linear only lets a ticket have one label from a group. The branch is cut from `dev` the first time it's used.
   Merging the finished feature branch into `dev` is yours to do.
+- **When a feature is done:** once every ticket in a Linear project (In Progress status) is Done, an agent reads
+  the tickets, PRs and diff and writes a **QA** ticket for you in that project: one checklist section per repo,
+  with happy paths, edge cases, regressions and the riskiest areas, as tick boxes. For each feature branch it
+  also opens the feature → `dev` PR, linked to the QA ticket. That PR is never auto-merged. Do the QA, merge
+  the PR(s), then mark the project complete. Projects with no orchestrator-merged PRs are skipped, so older
+  hand-built features won't suddenly get QA tickets. Turn this off with `qa.enabled` in the config.
 - **Releasing:** nothing the orchestrator does touches `main`. You merge `dev` → `main` when the preview looks right.
   The config refuses to auto-merge into `main`.
 - **Answer a question:** reply on the ticket, then move it back to the status the comment names. Your comments
@@ -114,6 +120,7 @@ Agents run real commands (tests, `npm`, `php`) on this machine, the same as when
 | `prompts/*.md` | What each agent is told. Tune these as you learn what goes wrong |
 | `src/rules.ts` | Every decision (routing, order, the PR state machine). Pure and tested |
 | `src/pipeline.ts` | The steps: design, build, review, fix, merge, hold, escalate |
+| `src/qa.ts` | The QA checklist step when a project's tickets are all done |
 | `src/scheduler.ts` | The loop, parallel limits, pause, budget, crash recovery |
 | `~/.orchestrator/worktrees/` | One worktree per ticket, removed after merge |
 | `~/.orchestrator/state/logs/` | Full prompt and output of every agent run |

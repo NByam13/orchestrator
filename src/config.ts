@@ -77,6 +77,17 @@ export interface Config {
          */
         branchLabelGroup: string;
     };
+    qa: {
+        enabled: boolean;
+        /** Label on the QA ticket. Tickets with it don't count toward "the project is done". */
+        label: string;
+        /** Status the QA ticket is created in. It's yours to work, so not "Ready for agent". */
+        status: string;
+        /** Linear priority for the QA ticket: 1 urgent … 4 low. */
+        priority: number;
+        /** Open the feature-branch → base PR alongside the QA ticket (never auto-merged). */
+        openFeaturePr: boolean;
+    };
     claude: {
         /** Path or name of the Claude Code CLI. */
         bin: string;

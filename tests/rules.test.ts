@@ -12,6 +12,10 @@ import {
     protectedFilesTouched,
     routeTicket,
     targetBranch,
+    projectReadyForQa,
+    projectSignature,
+    parseQaReport,
+    qaSection,
     type Marker,
     type PrSnapshot,
     type Ticket,
@@ -156,4 +160,28 @@ describe("PR state machine", () => {
         expect(decidePrAction(snap({ markers: escalated })).do).toBe("resume");
         expect(decidePrAction(snap({ markers: [...escalated, { kind: "resume", sha: "abc" }] })).do).toBe("review");
     });
+});
+
+describe("QA", () => {
+    const issue = (identifier: string, stateType: string, labels: string[] = []) => ({ identifier, stateType, labels });
+
+    it("is ready when all work is done", () => {
+        expect(projectReadyForQa([issue("A", "completed"), issue("B", "completed"), issue("C", "canceled")], "QA")).toBe(true);
+    });
+    it("waits while anything is open", () => expect(projectReadyForQa([issue("A", "completed"), issue("B", "started")], "QA")).toBe(false));
+    it("never makes a second QA ticket", () => expect(projectReadyForQa([issue("A", "completed"), issue("Q", "completed", ["QA"])], "QA")).toBe(false));
+    it("ignores empty projects", () => expect(projectReadyForQa([issue("C", "canceled")], "QA")).toBe(false));
+    it("signature changes when a ticket moves", () => {
+        expect(projectSignature([issue("A", "started")])).not.toBe(projectSignature([issue("A", "completed")]));
+        expect(projectSignature([issue("A", "x"), issue("B", "y")])).toBe(projectSignature([issue("B", "y"), issue("A", "x")]));
+    });
+    it("parses and renders a checklist", () => {
+        const r = parseQaReport('```orchestrator\n{"summary":"Deck import.","setup":["Open dev preview"],"checks":[{"area":"Import","step":"Paste code","expect":"Deck loads","kind":"happy"},{"area":"Import","step":"Paste junk","expect":"Error shown","kind":"edge"}],"risks":["Parser"]}\n```');
+        expect(r?.checks).toHaveLength(2);
+        const md = qaSection("card_sim", r!);
+        expect(md).toContain("- [ ] Paste code → *Deck loads*");
+        expect(md).toContain("### Edge cases");
+        expect(md).toContain("### Most likely to break");
+    });
+    it("rejects a checklist with no checks", () => expect(parseQaReport('```orchestrator\n{"summary":"x","checks":[]}\n```')).toBeUndefined());
 });

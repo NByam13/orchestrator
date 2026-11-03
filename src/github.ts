@@ -2,6 +2,8 @@ import { Octokit } from "@octokit/rest";
 import { parseMarker, type CiState, type Marker } from "./rules.ts";
 
 export const PR_LABEL = "orchestrator";
+/** Feature → dev PRs opened for QA. Deliberately a different label so the merge loop ignores them. */
+export const FEATURE_PR_LABEL = "orchestrator-feature";
 const TICKET_TAG = /<!-- orchestrator-ticket ([A-Z]+-\d+) -->/;
 
 export interface AgentPr {
@@ -39,6 +41,35 @@ export class GitHub {
         const { data } = await this.kit.pulls.list({ owner, repo: name, state: "open", head: `${owner}:${branch}` });
         const pr = data[0];
         return pr ? { number: pr.number, url: pr.html_url, branch, base: pr.base.ref, headSha: pr.head.sha, ticket: pr.body?.match(TICKET_TAG)?.[1] ?? "" } : undefined;
+    }
+
+    /** Agent PRs that were merged, for the given tickets. Looks at the most recent 300 closed PRs. */
+    async mergedAgentPrs(repo: string, tickets: Set<string>): Promise<{ number: number; title: string; url: string; body: string; base: string; ticket: string }[]> {
+        const out: { number: number; title: string; url: string; body: string; base: string; ticket: string }[] = [];
+        for (let page = 1; page <= 3; page++) {
+            const { data } = await this.kit.pulls.list({ ...this.split(repo), state: "closed", sort: "updated", direction: "desc", per_page: 100, page });
+            for (const pr of data) {
+                const ticket = pr.body?.match(TICKET_TAG)?.[1];
+                if (pr.merged_at && ticket && tickets.has(ticket) && pr.labels.some((l) => l.name === PR_LABEL)) {
+                    out.push({ number: pr.number, title: pr.title, url: pr.html_url, body: (pr.body ?? "").replace(TICKET_TAG, "").trim(), base: pr.base.ref, ticket });
+                }
+            }
+            if (data.length < 100) break;
+        }
+        return out;
+    }
+
+    /** Opens (or finds) the PR that merges a finished feature branch. Never labelled for the loop, so it is never auto-merged. */
+    async ensureFeaturePr(repo: string, opts: { branch: string; base: string; title: string; body: string }): Promise<string> {
+        const { owner, repo: name } = this.split(repo);
+        const existing = await this.kit.pulls.list({ owner, repo: name, state: "open", head: `${owner}:${opts.branch}`, base: opts.base });
+        if (existing.data[0]) {
+            await this.kit.issues.createComment({ owner, repo: name, issue_number: existing.data[0].number, body: opts.body });
+            return existing.data[0].html_url;
+        }
+        const { data } = await this.kit.pulls.create({ owner, repo: name, head: opts.branch, base: opts.base, title: opts.title, body: opts.body });
+        await this.kit.issues.addLabels({ owner, repo: name, issue_number: data.number, labels: [FEATURE_PR_LABEL] });
+        return data.html_url;
     }
 
     async createPr(repo: string, opts: { branch: string; base: string; title: string; body: string; ticket: string }): Promise<AgentPr> {

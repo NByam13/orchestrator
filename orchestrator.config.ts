@@ -32,6 +32,13 @@ export default defineConfig({
         // Labels inside this group are branch names, e.g. "feature/pvp-rebuild".
         branchLabelGroup: "Branch",
     },
+    qa: {
+        enabled: true,
+        label: "QA",
+        status: "Todo",
+        priority: 2,
+        openFeaturePr: true,
+    },
     claude: {
         bin: "claude",
         // Leave unset to use your Claude Code default. A different reviewer model catches different mistakes.

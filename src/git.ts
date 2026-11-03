@@ -81,6 +81,21 @@ export class Git {
         }
     }
 
+    /** A read-only checkout of a branch tip, for agents that only look (QA). Recreated fresh each time. */
+    async snapshotWorktree(project: ProjectConfig, name: string, branch: string): Promise<string> {
+        const repo = this.repo(project);
+        const path = this.worktreePath(project, name);
+        await must("git", ["fetch", "--quiet", "origin"], { cwd: repo });
+        await run("git", ["worktree", "remove", "--force", path], { cwd: repo });
+        await mkdir(join(path, ".."), { recursive: true });
+        await must("git", ["worktree", "add", "--detach", path, `origin/${branch}`], { cwd: repo });
+        return path;
+    }
+
+    async removeSnapshot(project: ProjectConfig, name: string): Promise<void> {
+        await run("git", ["worktree", "remove", "--force", this.worktreePath(project, name)], { cwd: this.repo(project) });
+    }
+
     /** Commits anything the agent left uncommitted. Returns true if a commit was made. */
     async commitAll(path: string, message: string): Promise<boolean> {
         await must("git", ["add", "-A"], { cwd: path });
