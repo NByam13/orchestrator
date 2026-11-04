@@ -106,7 +106,8 @@ done
 - **Agents can't push, open PRs, change ticket status, or switch branches.** The orchestrator does those.
 - **Only blocker/major findings send a PR back.** Minor ones are noted on the PR and don't loop.
 - **Fix rounds are capped** (3), and so are local gate retries (2). After that, it asks you.
-- **Daily budget:** stops starting agent runs once Claude Code reports `dailyBudgetUsd` of usage today.
+- **Usage limit:** when a run hits the subscription's usage limit (5-hour window or weekly), agent runs pause until
+  it resets. The ticket goes back to the queue (work so far stays on the branch); non-agent steps keep running.
 - **Branch protection:** GitHub's required checks need a paid plan on private repos, so the orchestrator checks CI
   itself before merging. Your `pre-push` hook still blocks direct pushes to main.
 
@@ -121,7 +122,7 @@ Agents run real commands (tests, `npm`, `php`) on this machine, the same as when
 | `src/rules.ts` | Every decision (routing, order, the PR state machine). Pure and tested |
 | `src/pipeline.ts` | The steps: design, build, review, fix, merge, hold, escalate |
 | `src/qa.ts` | The QA checklist step when a project's tickets are all done |
-| `src/scheduler.ts` | The loop, parallel limits, pause, budget, crash recovery |
+| `src/scheduler.ts` | The loop, parallel limits, pause, usage-limit pause, crash recovery |
 | `~/.orchestrator/worktrees/` | One worktree per ticket, removed after merge |
 | `~/.orchestrator/state/logs/` | Full prompt and output of every agent run |
 

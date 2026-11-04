@@ -71,7 +71,6 @@ async function main(): Promise<void> {
             break;
         }
         case "status": {
-            log.info("status", `spent today: $${(await claude.spentToday()).toFixed(2)} of $${config.loop.dailyBudgetUsd}`);
             await scheduler.tick(true);
             break;
         }

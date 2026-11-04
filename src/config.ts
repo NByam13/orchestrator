@@ -105,13 +105,11 @@ export interface Config {
         maxGateRetries: number;
         /** Severities that block a merge. Anything else is noted on the PR and left alone. */
         blockingSeverities: Array<"blocker" | "major" | "minor">;
-        /** Stop starting new agent runs once this much has been spent today (per Claude Code's reported cost). */
-        dailyBudgetUsd: number;
     };
     paths: {
         /** Where worktrees live, outside your repos. */
         worktrees: string;
-        /** Run logs and the daily spend counter. */
+        /** Run logs. */
         state: string;
     };
     projects: ProjectConfig[];

@@ -53,7 +53,6 @@ export default defineConfig({
         maxFixRounds: 3,
         maxGateRetries: 2,
         blockingSeverities: ["blocker", "major"],
-        dailyBudgetUsd: 40,
     },
     paths: {
         worktrees: "~/.orchestrator/worktrees",

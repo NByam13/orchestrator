@@ -349,3 +349,26 @@ export function qaSection(heading: string, r: QaReport): string {
     if (r.risks.length) out.push("### Most likely to break", ...r.risks.map((x) => `- ${x}`));
     return out.join("\n\n");
 }
+
+// ---------- subscription usage limit ----------
+
+const LIMIT_RE = /usage limit reached|(hour|weekly|session) limit reached|hit your (usage )?limit/i;
+
+/**
+ * When a failed Claude Code run says the subscription's usage window is spent, when it resets. Undefined otherwise.
+ * Handles "usage limit reached|<epoch seconds>" and "... resets 3pm" / "resets 3:30pm" (machine-local time).
+ */
+export function usageLimitUntil(text: string, now: Date): Date | undefined {
+    if (!LIMIT_RE.test(text)) return undefined;
+    const epoch = text.match(/limit reached\|(\d{10})/i);
+    if (epoch) return new Date(Number(epoch[1]) * 1000);
+    const at = text.match(/resets\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+    if (at) {
+        const d = new Date(now);
+        d.setHours((Number(at[1]) % 12) + (at[3]!.toLowerCase() === "pm" ? 12 : 0), Number(at[2] ?? 0), 0, 0);
+        if (d <= now) d.setDate(d.getDate() + 1);
+        return d;
+    }
+    // shortcut: unknown message format, so probe again in 15 min; a limited run fails fast and costs nothing.
+    return new Date(now.getTime() + 15 * 60_000);
+}

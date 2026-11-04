@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { Claude } from "./claude.ts";
+import { UsageLimitError, type Claude } from "./claude.ts";
 import type { Config, ProjectConfig } from "./config.ts";
 import type { AgentPr, GitHub } from "./github.ts";
 import type { Linear } from "./linear.ts";
@@ -54,10 +54,17 @@ export class Scheduler {
         for (const t of await this.linear.ticketsInStates([s.working])) {
             if (this.running.has(t.identifier)) continue;
             log.warn(t.identifier, "was mid-run when the orchestrator stopped; re-queueing");
-            await this.linear.comment(t, "The orchestrator restarted mid-run. Re-queued; work so far is kept on the branch.");
-            const lastStart = [...t.comments].reverse().find((c) => c.body.includes("▶️ Started:"));
-            await this.linear.setState(t, lastStart?.body.includes("approved design") ? s.designApproved : s.ready);
+            await this.requeue(t, "The orchestrator restarted mid-run. Re-queued; work so far is kept on the branch.");
         }
+    }
+
+    /** Put a ticket stuck in "Agent working" back where it came from. */
+    private async requeue(t: Ticket, why: string): Promise<void> {
+        const s = this.config.linear.statuses;
+        if (t.state !== s.working) return;
+        await this.linear.comment(t, why);
+        const lastStart = [...t.comments].reverse().find((c) => c.body.includes("▶️ Started:"));
+        await this.linear.setState(t, lastStart?.body.includes("approved design") ? s.designApproved : s.ready);
     }
 
     async plan(): Promise<Planned[]> {
@@ -190,16 +197,16 @@ export class Scheduler {
             log.info("loop", "paused (PAUSE file present)");
             return [];
         }
-        const spent = await this.claude.spentToday();
-        const overBudget = spent >= this.config.loop.dailyBudgetUsd;
-        if (overBudget) log.warn("loop", `daily budget reached ($${spent.toFixed(2)}); only non-agent steps run`);
+        const until = this.claude.limitedUntil;
+        const limited = !!until && until > new Date();
+        if (limited) log.warn("loop", `usage limit reached; agent runs paused until ${until.toLocaleString()}, only non-agent steps run`);
 
         const started: Promise<void>[] = [];
         for (const job of await this.plan()) {
             if (this.stopping) break;
             if (this.running.has(job.key)) continue;
             if (job.agent) {
-                if (overBudget) continue;
+                if (limited) continue;
                 const agentRuns = [...this.running.values()];
                 if (agentRuns.length >= this.config.loop.maxParallel) continue;
                 if (job.project && agentRuns.filter((r) => r.project === job.project!.name).length >= job.project.maxParallel) continue;
@@ -220,6 +227,11 @@ export class Scheduler {
             .run()
             .catch(async (err: unknown) => {
                 const msg = err instanceof Error ? err.message : String(err);
+                if (err instanceof UsageLimitError) {
+                    log.warn(job.key, msg);
+                    if (!job.key.startsWith("qa:")) await this.requeue(await this.linear.ticket(job.key), `⏸️ ${msg}. Re-queued; work so far is kept on the branch.`).catch(() => undefined);
+                    return;
+                }
                 log.error(job.key, msg);
                 if (job.key.startsWith("qa:")) {
                     await notify(`QA step failed`, `${job.describe}: ${msg.slice(0, 500)}`);

@@ -8,6 +8,7 @@ import {
     markerComment,
     parseBuildReport,
     parseMarker,
+    usageLimitUntil,
     parseReviewReport,
     protectedFilesTouched,
     routeTicket,
@@ -184,4 +185,23 @@ describe("QA", () => {
         expect(md).toContain("### Most likely to break");
     });
     it("rejects a checklist with no checks", () => expect(parseQaReport('```orchestrator\n{"summary":"x","checks":[]}\n```')).toBeUndefined());
+});
+
+describe("usageLimitUntil", () => {
+    const now = new Date(2026, 10, 4, 14, 0);
+    it("ignores ordinary failures", () => {
+        expect(usageLimitUntil("Claude Code failed: error_max_turns", now)).toBeUndefined();
+    });
+    it("reads an epoch reset", () => {
+        expect(usageLimitUntil("Claude AI usage limit reached|1793800000", now)?.getTime()).toBe(1793800000 * 1000);
+    });
+    it("reads a clock reset later today", () => {
+        expect(usageLimitUntil("5-hour limit reached ∙ resets 5:30pm", now)).toEqual(new Date(2026, 10, 4, 17, 30));
+    });
+    it("rolls a past clock time to tomorrow", () => {
+        expect(usageLimitUntil("You've hit your limit · resets 1am (Europe/London)", now)).toEqual(new Date(2026, 10, 5, 1, 0));
+    });
+    it("falls back to 15 minutes", () => {
+        expect(usageLimitUntil("Session limit reached", now)).toEqual(new Date(2026, 10, 4, 14, 15));
+    });
 });

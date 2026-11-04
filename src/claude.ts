@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expandHome, type Config, type ProjectConfig } from "./config.ts";
+import { usageLimitUntil } from "./rules.ts";
 import { run } from "./shell.ts";
 
 export type AgentRole = "builder" | "reviewer";
@@ -37,23 +37,21 @@ Your working directory is a git worktree on the ticket's branch. Stay inside it.
 Files under .orchestrator/ are scratch space and are never committed.
 `.trim();
 
+/** Thrown when the subscription's usage window is used up. The job didn't fail; it should be retried later. */
+export class UsageLimitError extends Error {
+    constructor(public until: Date) {
+        super(`Claude usage limit reached; agent runs paused until ${until.toLocaleString()}`);
+    }
+}
+
 export class Claude {
+    /** While set and in the future, the 5-hour usage window is spent and no agent runs should start. */
+    limitedUntil?: Date;
+
     constructor(private config: Config) {}
 
     private stateDir(): string {
         return expandHome(this.config.paths.state);
-    }
-
-    async spentToday(): Promise<number> {
-        const file = join(this.stateDir(), `spend-${today()}.json`);
-        if (!existsSync(file)) return 0;
-        return (JSON.parse(await readFile(file, "utf8")) as { usd: number }).usd;
-    }
-
-    private async addSpend(usd: number): Promise<void> {
-        await mkdir(this.stateDir(), { recursive: true });
-        const file = join(this.stateDir(), `spend-${today()}.json`);
-        await writeFile(file, JSON.stringify({ usd: (await this.spentToday()) + usd }));
     }
 
     async run(opts: { role: AgentRole; project: ProjectConfig; cwd: string; prompt: string; label: string }): Promise<AgentResult> {
@@ -96,14 +94,11 @@ export class Claude {
             /* fall through: not JSON means the CLI itself failed */
         }
         const costUsd = parsed.total_cost_usd ?? 0;
-        await this.addSpend(costUsd);
-
         const ok = r.code === 0 && !r.timedOut && !parsed.is_error;
+        const limit = ok ? undefined : usageLimitUntil(`${parsed.result ?? ""}\n${r.stdout}\n${r.stderr}`, new Date());
+        if (limit) throw new UsageLimitError((this.limitedUntil = limit));
+
         const why = r.timedOut ? `timed out after ${c.timeoutMinutes} min` : parsed.subtype && parsed.subtype !== "success" ? parsed.subtype : r.stderr.trim().slice(-500);
         return { ok, text: parsed.result ?? (ok ? "" : `Claude Code failed: ${why}`), costUsd, turns: parsed.num_turns ?? 0, logFile };
     }
-}
-
-function today(): string {
-    return new Date().toISOString().slice(0, 10);
 }
