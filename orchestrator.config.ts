@@ -28,7 +28,7 @@ export default defineConfig({
         },
         designLabel: "Design",
         holdLabel: "Hold for human",
-        unmanagedLabels: ["Artist Alley repo"],
+        unmanagedLabels: [],
         // Labels inside this group are branch names, e.g. "feature/pvp-rebuild".
         branchLabelGroup: "Branch",
     },
@@ -154,6 +154,32 @@ export default defineConfig({
             designHints:
                 "Laravel + Inertia React + Tailwind. Run `npm run build` then `php artisan serve --port=8124`, " +
                 "and screenshot with Playwright. Board UI needs a seeded game; check the seeders.",
+        },
+        {
+            name: "artist_alley",
+            repoPath: `${PONYREC_WORKSPACE}/artist_alley`,
+            github: "NByam13/artist_alley",
+            baseBranch: "main",
+            labels: ["Artist Alley repo"],
+            ci: true,
+            pathAliases: { "../": PONYREC_WORKSPACE },
+            setup: [
+                "cp {repo}/.env .env",
+                "cp {repo}/.env.testing .env.testing",
+                "composer install --no-interaction --no-progress --quiet",
+                "npm ci --no-audit --no-fund --silent",
+            ],
+            // Mirrors .github/workflows/tests.yml. Build first: the feature tests render through the Vite manifest.
+            gates: ["npm run build", "composer ci:check"],
+            protectedPaths: laravelProtected,
+            // The orchestrator never auto-merges into main; Nick merges.
+            mergeMode: "hold",
+            mergeMethod: "squash",
+            maxParallel: 1,
+            allowedBash: ["Bash(php artisan:*)", "Bash(vendor/bin/pint:*)", "Bash(vendor/bin/phpstan:*)"],
+            designHints:
+                "Laravel + Inertia React + Tailwind. Run `npm run build` then `php artisan serve --port=8125`, " +
+                "and screenshot with Playwright.",
         },
     ],
 });
