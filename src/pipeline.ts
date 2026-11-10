@@ -176,7 +176,7 @@ export class Pipeline {
     // ---------- PR jobs ----------
 
     async review(project: ProjectConfig, ticket: Ticket, pr: AgentPr): Promise<void> {
-        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName, pr.base);
+        const path = await this.git.ensureWorktree(project, ticket.identifier, pr.branch, pr.base);
         const local = await this.git.headSha(path);
         if (local !== pr.headSha) {
             log.warn(ticket.identifier, `worktree at ${local.slice(0, 7)} but PR head is ${pr.headSha.slice(0, 7)}; skipping review this tick`);
@@ -202,7 +202,7 @@ export class Pipeline {
     }
 
     async fix(project: ProjectConfig, ticket: Ticket, pr: AgentPr, reason: "ci" | "review" | "conflict"): Promise<void> {
-        const path = await this.git.ensureWorktree(project, ticket.identifier, ticket.branchName, pr.base);
+        const path = await this.git.ensureWorktree(project, ticket.identifier, pr.branch, pr.base);
         const comments = await this.github.markerComments(project.github, pr.number);
         const round = fixRoundsSinceResume(comments.map((c) => c.marker)) + 1;
 
@@ -236,16 +236,16 @@ export class Pipeline {
 
         const prRef = { repo: project.github, number: pr.number, url: pr.url, sha: pr.headSha };
         if (!res.ok) {
-            await this.git.push(path, ticket.branchName).catch(() => undefined);
+            await this.git.push(path, pr.branch).catch(() => undefined);
             return this.escalate(ticket, `The fix run (${reason}) failed.`, `${res.text}\n\nLog: \`${res.logFile}\``, prRef);
         }
         if (report.status === "needs_input") {
-            await this.git.push(path, ticket.branchName).catch(() => undefined);
+            await this.git.push(path, pr.branch).catch(() => undefined);
             return this.escalate(ticket, "The fixer has a question.", `**Question:** ${report.question}\n\n${report.summary}`, prRef);
         }
 
         const gates = await this.gateLoop(project, ticket, path, pr.base, pr.url);
-        await this.git.push(path, ticket.branchName);
+        await this.git.push(path, pr.branch);
         const sha = await this.git.headSha(path);
         await this.github.comment(
             project.github,
@@ -260,7 +260,7 @@ export class Pipeline {
         await this.github.merge(project.github, pr.number, pr.headSha, project.mergeMethod, `${ticket.identifier}: ${ticket.title} (#${pr.number})`);
         await this.linear.setState(ticket, this.s.done);
         await this.linear.comment(ticket, `✅ Merged ${pr.url}`);
-        await this.git.removeWorktree(project, ticket.identifier, ticket.branchName);
+        await this.git.removeWorktree(project, ticket.identifier, pr.branch);
         await this.github.deleteBranch(project.github, pr.branch);
         log.info(ticket.identifier, `merged PR #${pr.number}`);
     }
