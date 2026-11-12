@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expandHome, type Config, type ProjectConfig } from "./config.ts";
@@ -136,9 +136,18 @@ export class Git {
         return must("git", ["diff", "--stat", `origin/${base}...HEAD`], { cwd: path });
     }
 
-    async removeWorktree(project: ProjectConfig, identifier: string, branch: string): Promise<void> {
+    /** Removes a ticket's worktree and the local branch it has checked out. */
+    async removeWorktree(project: ProjectConfig, identifier: string): Promise<void> {
         const repo = this.repo(project);
-        await run("git", ["worktree", "remove", "--force", this.worktreePath(project, identifier)], { cwd: repo });
-        await run("git", ["branch", "-D", branch], { cwd: repo });
+        const path = this.worktreePath(project, identifier);
+        const head = existsSync(path) ? await run("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: path }) : undefined;
+        await run("git", ["worktree", "remove", "--force", path], { cwd: repo });
+        if (head?.code === 0) await run("git", ["branch", "-D", head.stdout.trim()], { cwd: repo });
+    }
+
+    /** Folder names under a project's worktree root. */
+    async worktreeFolders(project: ProjectConfig): Promise<string[]> {
+        const entries = await readdir(join(expandHome(this.config.paths.worktrees), project.name), { withFileTypes: true }).catch(() => []);
+        return entries.filter((e) => e.isDirectory()).map((e) => e.name);
     }
 }

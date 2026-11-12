@@ -110,6 +110,14 @@ export class Linear {
         return toTicket(data.issue);
     }
 
+    /** The ticket's Linear state type (e.g. "completed"), or undefined if it can't be read. */
+    async stateType(identifier: string): Promise<string | undefined> {
+        const data = await this.gql<{ issue: { state: { type: string } } }>(`query($id: String!) { issue(id: $id) { state { type } } }`, { id: identifier }).catch(
+            () => undefined,
+        );
+        return data?.issue.state.type;
+    }
+
     async setState(ticket: Pick<Ticket, "id">, stateName: string): Promise<void> {
         await this.loadTeam();
         const stateId = this.stateIds.get(stateName);

@@ -123,7 +123,7 @@ Agents run real commands (tests, `npm`, `php`) on this machine, the same as when
 | `src/pipeline.ts` | The steps: design, build, review, fix, merge, hold, escalate |
 | `src/qa.ts` | The QA checklist step when a project's tickets are all done |
 | `src/scheduler.ts` | The loop, parallel limits, pause, usage-limit pause, crash recovery |
-| `~/.orchestrator/worktrees/` | One worktree per ticket, removed after merge |
+| `~/.orchestrator/worktrees/` | One worktree per ticket, removed once the ticket is Done or Canceled |
 | `~/.orchestrator/state/logs/` | Full prompt and output of every agent run |
 
 The orchestrator keeps no database. Linear statuses and the hidden markers in its PR comments are the whole

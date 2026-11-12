@@ -12,6 +12,7 @@ import {
     parseReviewReport,
     protectedFilesTouched,
     routeTicket,
+    sweepable,
     targetBranch,
     projectReadyForQa,
     projectSignature,
@@ -203,5 +204,28 @@ describe("usageLimitUntil", () => {
     });
     it("falls back to 15 minutes", () => {
         expect(usageLimitUntil("Session limit reached", now)).toEqual(new Date(2026, 10, 4, 14, 15));
+    });
+});
+
+describe("sweepable", () => {
+    const idle = new Set<string>();
+
+    it("removes a finished ticket's worktree", () => {
+        expect(sweepable("PON-203", idle, "completed")).toBe(true);
+        expect(sweepable("PON-203", idle, "canceled")).toBe(true);
+    });
+
+    it("keeps a ticket that isn't finished, or whose state couldn't be read", () => {
+        expect(sweepable("PON-203", idle, "started")).toBe(false);
+        expect(sweepable("PON-203", idle, undefined)).toBe(false);
+    });
+
+    it("keeps a worktree a job or open PR is using", () => {
+        expect(sweepable("PON-203", new Set(["PON-203"]), "completed")).toBe(false);
+    });
+
+    it("leaves folders that aren't a ticket's alone", () => {
+        expect(sweepable("qa-mobile-board", idle, "completed")).toBe(false);
+        expect(sweepable(".DS_Store", idle, "completed")).toBe(false);
     });
 });

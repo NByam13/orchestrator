@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     const humanId = await linear.viewerId();
     const pipeline = new Pipeline(config, linear, github, git, claude, humanId);
     const qa = new Qa(config, linear, github, git, claude, humanId);
-    const scheduler = new Scheduler(config, linear, github, claude, pipeline, qa);
+    const scheduler = new Scheduler(config, linear, github, git, claude, pipeline, qa);
 
     switch (command) {
         case "start":

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { UsageLimitError, type Claude } from "./claude.ts";
 import type { Config, ProjectConfig } from "./config.ts";
+import type { Git } from "./git.ts";
 import type { AgentPr, GitHub } from "./github.ts";
 import type { Linear } from "./linear.ts";
 import { log } from "./log.ts";
@@ -15,6 +16,7 @@ import {
     projectSignature,
     protectedFilesTouched,
     routeTicket,
+    sweepable,
     targetBranch,
     type PrAction,
     type Ticket,
@@ -43,6 +45,7 @@ export class Scheduler {
         private config: Config,
         private linear: Linear,
         private github: GitHub,
+        private git: Git,
         private claude: Claude,
         private pipeline: Pipeline,
         private qa: Qa,
@@ -72,9 +75,11 @@ export class Scheduler {
         const planned: Planned[] = [];
 
         // 1. Finish what's open before starting anything new.
+        const withOpenPr = new Set<string>();
         for (const project of this.config.projects) {
             const prs = await this.github.openAgentPrs(project.github);
             for (const pr of prs) {
+                withOpenPr.add(pr.ticket);
                 if (this.running.has(pr.ticket)) continue;
                 const ticket = await this.linear.ticket(pr.ticket);
                 const action = await this.prAction(project, ticket, pr);
@@ -141,6 +146,22 @@ export class Scheduler {
                             this.qaSeen.set(proj.id, sig);
                         }
                     },
+                });
+            }
+        }
+        // 4. Worktrees of tickets finished without a merge here (a human merge, a cancel) are removed.
+        const busy = new Set([...withOpenPr, ...this.running.keys(), ...planned.map((p) => p.key)]);
+        for (const project of this.config.projects) {
+            for (const folder of await this.git.worktreeFolders(project)) {
+                // The cheap checks first, so Linear is only asked about folders that could go.
+                if (!sweepable(folder, busy, "completed")) continue;
+                if (!sweepable(folder, busy, await this.linear.stateType(folder))) continue;
+                planned.push({
+                    key: `sweep:${project.name}:${folder}`,
+                    project,
+                    agent: false,
+                    describe: `remove finished worktree ${folder}`,
+                    run: () => this.git.removeWorktree(project, folder),
                 });
             }
         }

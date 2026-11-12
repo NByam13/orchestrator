@@ -287,6 +287,16 @@ export function decidePrAction(s: PrSnapshot): PrAction {
     return { do: "merge" };
 }
 
+// ---------- worktree sweep ----------
+
+/**
+ * Whether a folder under a project's worktree root can be removed: it's a ticket's (not a `qa-…` snapshot), no job
+ * or open PR is using it, and the ticket is finished.
+ */
+export function sweepable(folder: string, busy: Set<string>, stateType: string | undefined): boolean {
+    return /^[A-Z]+-\d+$/.test(folder) && !busy.has(folder) && ["completed", "canceled", "duplicate"].includes(stateType ?? "");
+}
+
 // ---------- QA ----------
 
 export interface ProjectIssue {

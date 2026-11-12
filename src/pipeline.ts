@@ -260,7 +260,7 @@ export class Pipeline {
         await this.github.merge(project.github, pr.number, pr.headSha, project.mergeMethod, `${ticket.identifier}: ${ticket.title} (#${pr.number})`);
         await this.linear.setState(ticket, this.s.done);
         await this.linear.comment(ticket, `✅ Merged ${pr.url}`);
-        await this.git.removeWorktree(project, ticket.identifier, pr.branch);
+        await this.git.removeWorktree(project, ticket.identifier);
         await this.github.deleteBranch(project.github, pr.branch);
         log.info(ticket.identifier, `merged PR #${pr.number}`);
     }
